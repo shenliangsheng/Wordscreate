@@ -9,6 +9,7 @@ import io
 import tempfile
 from typing import Dict, List
 from pathlib import Path
+import datetime
 
 # 设置页面标题
 st.set_page_config(page_title="文档批量生成工具", layout="wide")
@@ -21,6 +22,8 @@ if 'output_dir' not in st.session_state:
     st.session_state.output_dir = ""
 if 'generated_files' not in st.session_state:
     st.session_state.generated_files = []
+if 'filename_template' not in st.session_state:
+    st.session_state.filename_template = ""
 
 # 占位符处理器
 class PlaceholderHandler:
@@ -115,35 +118,24 @@ def process_document(template_path: str, output_path: str, replacements: Dict[st
         st.error(f"处理文档时发生错误: {str(e)}")
         return False
 
-def generate_output_filename(row: Dict[str, str], filename_columns: List[str]) -> str:
-    """生成输出文件名"""
-    filename_parts = []
+def generate_output_filename(row: Dict[str, str], filename_template: str) -> str:
+    """使用模板生成输出文件名"""
+    filename = filename_template
     
-    for col in filename_columns:
-        if col in row and row[col]:
-            filename_parts.append(str(row[col]))
+    # 替换模板中的占位符
+    for key, value in row.items():
+        for pattern in PlaceholderHandler.PLACEHOLDER_PATTERNS:
+            wrapped_key = pattern.replace(r'(.*?)', re.escape(key))
+            if re.search(wrapped_key, filename):
+                filename = re.sub(wrapped_key, str(value), filename)
     
-    if not filename_parts:
-        # 如果用户没有指定列，则使用前三个非空值
-        for i, (key, value) in enumerate(row.items()):
-            if i >= 3:
-                break
-            if value:
-                filename_parts.append(str(value))
+    # 添加日期时间戳避免重复
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    filename = f"{filename}_{timestamp}"
     
-    if not filename_parts:
-        filename_parts.append("generated_document")
-    
-    filename = "_".join(filename_parts)
     # 移除非法字符
     filename = re.sub(r'[\\/*?:"<>|]', "", filename).strip()
-    return filename[:100]  # 限制文件名长度
-
-def validate_dataframe(df: pd.DataFrame, required_columns: List[str]) -> None:
-    """验证DataFrame是否包含必需的列"""
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        raise ValueError(f"Excel中缺少必要列: {', '.join(missing_columns)}")
+    return f"{filename[:100]}.docx"  # 限制文件名长度
 
 # 文件上传区域
 st.header("1. 上传文件")
@@ -155,19 +147,12 @@ with col1:
 with col2:
     template_file = st.file_uploader("上传Word模板文件", type=["docx"])
 
-# 配置区域
-st.header("2. 配置选项")
-
-required_columns = st.text_input(
-    "必填列（用逗号分隔）",
-    value="客户案号",
-    help="这些列必须在Excel中存在，否则会报错"
-)
-
-filename_columns = st.text_input(
-    "文件名生成列（用逗号分隔）",
-    value="客户案号",
-    help="这些列的值将用于生成文件名"
+# 文件名模板区域
+st.header("2. 文件名模板")
+filename_template = st.text_input(
+    "文件名模板（使用与Word模板相同的占位符格式）",
+    value="请款单（{{申请人}}-{{合计}}-集佳-{{日期}}）",
+    help="示例：请款单（{{申请人}}-{{合计}}-集佳-{{日期}}）"
 )
 
 # 处理按钮
@@ -188,13 +173,8 @@ if st.button("开始生成文档") and excel_file and template_file:
     
     # 处理Excel数据
     try:
-        # 解析配置
-        required_cols = [col.strip() for col in required_columns.split(",") if col.strip()]
-        filename_cols = [col.strip() for col in filename_columns.split(",") if col.strip()]
-        
         # 读取Excel
         df = pd.read_excel(excel_path).astype(str)
-        validate_dataframe(df, required_cols)
         
         # 生成文档
         progress_bar = st.progress(0)
@@ -203,6 +183,14 @@ if st.button("开始生成文档") and excel_file and template_file:
         
         total_rows = len(df)
         success_count = 0
+        
+        # 检查模板中的占位符
+        template_doc = Document(template_path)
+        template_text = "\n".join([p.text for p in template_doc.paragraphs])
+        template_placeholders = PlaceholderHandler.find_placeholders(template_text)
+        
+        # 显示占位符信息
+        st.info(f"模板中包含以下占位符: {', '.join(template_placeholders)}")
         
         for index, row in df.iterrows():
             # 更新进度
@@ -214,20 +202,21 @@ if st.button("开始生成文档") and excel_file and template_file:
             replacements = row.to_dict()
             
             # 生成文件名
-            base_filename = generate_output_filename(replacements, filename_cols)
-            output_path = os.path.join(st.session_state.output_dir, f"{base_filename}.docx")
+            output_filename = generate_output_filename(replacements, filename_template)
+            output_path = os.path.join(st.session_state.output_dir, output_filename)
             
             # 处理文档
             if process_document(template_path, output_path, replacements):
                 success_count += 1
                 generated_files.append({
-                    "name": f"{base_filename}.docx",
+                    "name": output_filename,
                     "path": output_path
                 })
         
         # 保存结果
         st.session_state.generated_files = generated_files
         st.session_state.processing_stage = 1
+        st.session_state.filename_template = filename_template
         
         # 显示结果
         st.success(f"文档生成完成！成功: {success_count}/{total_rows}")
@@ -253,9 +242,9 @@ if st.session_state.processing_stage == 1 and st.session_state.generated_files:
     
     # 提供下载按钮
     st.download_button(
-        label="下载所有文档 (ZIP)",
+        label=f"下载所有文档 (ZIP)",
         data=zip_buffer,
-        file_name="generated_documents.zip",
+        file_name=f"generated_documents_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
         mime="application/zip"
     )
     
@@ -282,6 +271,7 @@ if st.button("重置系统"):
     st.session_state.processing_stage = 0
     st.session_state.output_dir = ""
     st.session_state.generated_files = []
+    st.session_state.filename_template = ""
     
     st.success("系统已重置，可以开始新的处理流程！")
     st.experimental_rerun()
@@ -293,9 +283,9 @@ st.sidebar.markdown("""
    - Excel数据文件（包含占位符数据）
    - Word模板文件（包含占位符标记）
 
-2. **配置选项**:
-   - 必填列：Excel中必须存在的列
-   - 文件名生成列：用于生成文件名的列
+2. **设置文件名模板**:
+   - 使用与Word模板相同的占位符格式
+   - 示例: `请款单（{{申请人}}-{{合计}}-集佳-{{日期}}）`
 
 3. **开始生成**:
    - 点击"开始生成文档"按钮
@@ -313,5 +303,14 @@ st.sidebar.markdown("""
 - `{key}`
 - `[[key]]`
 
-在Word模板中使用这些格式标记需要替换的位置。
+在Word模板和文件名模板中使用相同的格式。
+""")
+
+st.sidebar.header("格式保留")
+st.sidebar.markdown("""
+系统会保留Word模板中的所有格式:
+- 字体、大小、颜色
+- 加粗、斜体、下划线
+- 背景颜色
+- 表格格式
 """)
