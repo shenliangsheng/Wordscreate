@@ -7,9 +7,8 @@ import sys
 import zipfile
 import io
 import tempfile
-from typing import Dict, List
-from pathlib import Path
 import datetime
+import uuid
 
 # 设置页面标题
 st.set_page_config(page_title="文档批量生成工具", layout="wide")
@@ -36,7 +35,7 @@ class PlaceholderHandler:
     ]
 
     @classmethod
-    def find_placeholders(cls, text: str) -> List[str]:
+    def find_placeholders(cls, text: str) -> list:
         """查找文本中的所有占位符"""
         placeholders = []
         for pattern in cls.PLACEHOLDER_PATTERNS:
@@ -53,7 +52,7 @@ class PlaceholderHandler:
                 text = re.sub(wrapped_placeholder, str(value), text)
         return text
 
-def replace_text_in_paragraph(paragraph, replacements: Dict[str, str]):
+def replace_text_in_paragraph(paragraph, replacements: dict):
     """替换段落中的占位符，保留原有格式"""
     all_placeholders = []
     
@@ -87,7 +86,7 @@ def replace_text_in_paragraph(paragraph, replacements: Dict[str, str]):
     else:
         paragraph.add_run(full_text)
 
-def process_document(template_path: str, output_path: str, replacements: Dict[str, str]) -> bool:
+def process_document(template_path: str, output_path: str, replacements: dict) -> bool:
     """处理整个Word文档的替换"""
     try:
         doc = Document(template_path)
@@ -118,7 +117,7 @@ def process_document(template_path: str, output_path: str, replacements: Dict[st
         st.error(f"处理文档时发生错误: {str(e)}")
         return False
 
-def generate_output_filename(row: Dict[str, str], filename_template: str) -> str:
+def generate_output_filename(row: dict, filename_template: str) -> str:
     """使用模板生成输出文件名"""
     filename = filename_template
     
@@ -245,23 +244,27 @@ if st.session_state.processing_stage == 1 and st.session_state.generated_files:
         label=f"下载所有文档 (ZIP)",
         data=zip_buffer,
         file_name=f"generated_documents_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-        mime="application/zip"
+        mime="application/zip",
+        key="download_all_zip"
     )
     
     # 显示生成的文件列表
     st.subheader("生成的文档列表")
-    for file_info in st.session_state.generated_files:
+    for i, file_info in enumerate(st.session_state.generated_files):
         if os.path.exists(file_info["path"]):
             with open(file_info["path"], "rb") as f:
+                # 为每个按钮生成唯一key
+                unique_key = f"doc_download_{i}_{uuid.uuid4()}"
                 st.download_button(
                     label=f"下载 {file_info['name']}",
                     data=f.read(),
                     file_name=file_info["name"],
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=unique_key
                 )
 
 # 重置按钮
-if st.button("重置系统"):
+if st.button("重置系统", key="reset_button"):
     # 清除session状态
     keys_to_clear = list(st.session_state.keys())
     for key in keys_to_clear:
