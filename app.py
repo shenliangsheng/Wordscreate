@@ -128,13 +128,14 @@ def generate_output_filename(row: dict, filename_template: str) -> str:
             if re.search(wrapped_key, filename):
                 filename = re.sub(wrapped_key, str(value), filename)
     
-    # 添加日期时间戳避免重复
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    filename = f"{filename}_{timestamp}"
-    
     # 移除非法字符
     filename = re.sub(r'[\\/*?:"<>|]', "", filename).strip()
-    return f"{filename[:100]}.docx"  # 限制文件名长度
+    
+    # 确保文件名以.docx结尾
+    if not filename.lower().endswith('.docx'):
+        filename += '.docx'
+    
+    return filename
 
 # 文件上传区域
 st.header("1. 上传文件")
@@ -243,7 +244,7 @@ if st.session_state.processing_stage == 1 and st.session_state.generated_files:
     st.download_button(
         label=f"下载所有文档 (ZIP)",
         data=zip_buffer,
-        file_name=f"generated_documents_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+        file_name="generated_documents.zip",
         mime="application/zip",
         key="download_all_zip"
     )
